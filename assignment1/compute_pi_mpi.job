@@ -1,0 +1,38 @@
+#BSUB -n 64 -R 'select[nxt] rusage[mem=150] span[ptile=4]' -M 150
+#BSUB -J compute_pi_mpi -o output.%J -L /bin/bash -W 0:10
+##
+##NECESSARY JOB SPECIFICATIONS
+##BSUB -J JobName             # Set the job name to "JobName"
+##BSUB -L /bin/bash           # Uses the bash login shell to initialize the job's execution environment.
+##BSUB -W hh:mm               # Sets job's runtime wall-clock limit in hours:minutes or just minutes (-mm)
+##BSUB -n NNN                 # NNN: total number of cores/jobslots to allocate for the job
+##BSUB -R "select[node-type]" # Select node-type: nxt, mem256gb, gpu, phi, mem1t, mem2t ...
+##BSUB -R "span[ptile=XX]"    # XX:  number of cores/jobslots per node to use. Also, a node selection criterion.
+##BSUB -R "rusage[mem=nnn]"   # Reserves nnn MBs per process/CPU for the job
+##BSUB -M mm                  # Sets the per process enforceable memory limit to nnn MB
+##BSUB -o OUTPUTFILE.%J       # Send stdout and stderr to "OUTPUTFILE.[jobID]"
+#
+# <--- at this point the current working directory is the one you submitted the job from.
+#
+module load intel/2017A       # load Intel software stack 
+#
+echo "Processes = 1"
+mpirun -np 1 ./compute_pi_mpi.exe 1000000000
+echo "Processes = 4"
+mpirun -np 4 ./compute_pi_mpi.exe 1000000000
+echo "Processes = 8"
+mpirun -np 8 ./compute_pi_mpi.exe 1000000000
+echo "Processes = 16"
+mpirun -np 16 ./compute_pi_mpi.exe 1000000000
+echo "Processes = 32"
+mpirun -np 32 ./compute_pi_mpi.exe 1000000000
+echo "Processes = 64"
+mpirun -np 32 ./compute_pi_mpi.exe 1000000000
+echo "Processes = 64"
+mpirun -np 32 ./compute_pi_mpi.exe 10000000
+echo "Processes = 64"
+mpirun -np 32 ./compute_pi_mpi.exe 100000
+echo "Processes = 64"
+mpirun -np 32 ./compute_pi_mpi.exe 1000
+##
+
