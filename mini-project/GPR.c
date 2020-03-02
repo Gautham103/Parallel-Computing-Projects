@@ -5,6 +5,8 @@
 
 #define NOISE_PARAMETER 0.01
 #define GET_RAND ((double)rand()/(10.0 * (double)RAND_MAX)) - 0.05
+#define  SIZE 25
+typedef double VEC[SIZE];
 
 typedef struct node {
     double x;
@@ -21,9 +23,25 @@ double** alloc_mem_matrix (int n)
     }
     return matrix;
 }
-void print_matrix (double** matrix, int n)
+
+double** multiply_matrix (double** product, double** matrix1, double** matrix2, int r1, int c1, int r2, int c2)
 {
-    printf("\n --------------------- Printing K matrix --------------------- \n");
+    for(int i = 0; i < r1; i++)
+    {
+        for(int j = 0; j < c2; j++)
+        {
+            for(int k = 0; k < c1; k++)
+            {
+                product[i][j] += matrix1[i][k] * matrix2[k][j];
+            }
+        }
+    }
+    return product;
+}
+
+void print_matrix (char *msg, double** matrix, int n)
+{
+    printf("\n --------------------- %s --------------------- \n", msg);
     for(int i = 0; i < n; i++)
     {
         for(int j = 0; j < n; j++)
@@ -76,11 +94,11 @@ void initialize_points (node_coord *grid_points, int m, double h)
     }
 }
 
-void calculate_observed_data (double *observed_data_points, node_coord *grid_points, int n)
+void calculate_observed_data (double **observed_data_points, node_coord *grid_points, int n)
 {
     for(int id = 0; id < n; id++)
     {
-        observed_data_points[id] = 1 - (((grid_points[id].x - 0.5) * (grid_points[id].x - 0.5)) +
+        observed_data_points[0][id] = 1 - (((grid_points[id].x - 0.5) * (grid_points[id].x - 0.5)) +
                        ((grid_points[id].y - 0.5) * (grid_points[id].y - 0.5)));
     }
 
@@ -102,7 +120,7 @@ void compute_K_matrix (double **K, node_coord *grid_points, int n)
     }
 }
 
-void compute_k (double *k, node_coord *rstar, node_coord *grid_points, int n)
+void compute_k (double **k, node_coord *rstar, node_coord *grid_points, int n)
 {
     double temp_x, temp_y;
 
@@ -110,10 +128,82 @@ void compute_k (double *k, node_coord *rstar, node_coord *grid_points, int n)
     {
         temp_x = (grid_points[i].x - rstar[0].x) * (grid_points[i].x - rstar[0].x);
         temp_y = (grid_points[i].y - rstar[0].y) * (grid_points[i].y - rstar[0].y);
-        k[i] = exp(-1 * (temp_x + temp_y));
+        k[i][0] = exp(-1 * (temp_x + temp_y));
     }
 
 }
+void choldc1(int n, double ** a, VEC p)
+{
+    int i,j,k;
+    double sum;
+
+    for (i = 0; i < n; i++) {
+        for (j = i; j < n; j++) {
+            sum = a[i][j];
+            for (k = i - 1; k >= 0; k--) {
+                sum -= a[i][k] * a[j][k];
+            }
+            if (i == j) {
+                if (sum <= 0) {
+                    printf(" a is not positive definite!\n");
+                }
+                p[i] = sqrt(sum);
+            }
+            else {
+                a[j][i] = sum / p[i];
+            }
+        }
+    }
+}
+
+
+void choldcsl(int n, double ** A, double ** a)
+{
+    int i,j,k; double sum;
+    VEC p;
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            a[i][j] = A[i][j];
+    choldc1(n, a, p);
+    for (i = 0; i < n; i++) {
+        a[i][i] = 1 / p[i];
+        for (j = i + 1; j < n; j++) {
+            sum = 0;
+            for (k = i; k < j; k++) {
+                sum -= a[j][k] * a[k][i];
+            }
+            a[j][i] = sum / p[j];
+        }
+    }
+}
+
+void cholsl(int n, double ** A, double ** a)
+{
+    int i,j,k;
+    choldcsl(n,A,a);
+    for (i = 0; i < n; i++) {
+        for (j = i + 1; j < n; j++) {
+            a[i][j] = 0.0;
+        }
+    }
+    for (i = 0; i < n; i++) {
+        a[i][i] *= a[i][i];
+        for (k = i + 1; k < n; k++) {
+            a[i][i] += a[k][i] * a[k][i];
+        }
+        for (j = i + 1; j < n; j++) {
+            for (k = j; k < n; k++) {
+                a[i][j] += a[k][i] * a[k][j];
+            }
+        }
+    }
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < i; j++) {
+            a[i][j] = a[j][i];
+        }
+    }
+}
+
 
 int main(int argc, char* argv[])
 {
@@ -143,16 +233,29 @@ int main(int argc, char* argv[])
     initialize_points (grid_points, m, h);
     print_points (grid_points, m);
 
-    double *observed_data_points = (double *) malloc (n * sizeof (double));
+    double **observed_data_points = alloc_mem_matrix (n);
     calculate_observed_data (observed_data_points, grid_points, n);
-    print_data (observed_data_points, n);
+    print_matrix ("observed_data", observed_data_points, n);
 
     double **K = alloc_mem_matrix (n);
     compute_K_matrix (K, grid_points, n);
-    print_matrix (K, n);
+    print_matrix ("K matrix", K, n);
 
-    double *k = (double *) malloc (n * sizeof (double));
+    double **k = alloc_mem_matrix (n);
     compute_k (k, rstar, grid_points, n);
-    print_data (k, n);
+    print_matrix ("k vector", k, n);
+
+    double **K_inverse = alloc_mem_matrix (n);
+    cholsl(n, K, K_inverse);
+    print_matrix ("k inverse", K_inverse, n);
+
+    double **product = alloc_mem_matrix (n);
+    multiply_matrix (product, K_inverse, k, n , n, n, 1);
+    print_matrix ("product of K_inverse and k vector", product, n);
+
+    double **output = alloc_mem_matrix (n);
+    multiply_matrix (output, observed_data_points, product, 1, n, n, 1);
+    printf ("Predicted value is %lf\n", output[0][0]);
     return 0;
+
 }
