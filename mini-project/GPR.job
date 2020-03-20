@@ -18,17 +18,8 @@ module load intel/2017A       # load Intel software stack
 #
 echo "Processes = 1"
 export OMP_NUM_THREADS=1
-./GPR.exe 5 0.5 0.5
-echo "Processes = 2"
-export OMP_NUM_THREADS=2
-./GPR.exe 5 0.5 0.5
-echo "Processes = 4"
-export OMP_NUM_THREADS=4
-./GPR.exe 5 0.5 0.5
-echo "Processes = 10"
-export OMP_NUM_THREADS=10
-./GPR.exe 5 0.5 0.5
+./GPR.exe 10 0.5 0.5
 echo "Processes = 20"
 export OMP_NUM_THREADS=20
-./GPR.exe 5 0.5 0.5
+./GPR.exe 10 0.5 0.5
 ##
