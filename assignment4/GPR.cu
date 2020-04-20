@@ -12,6 +12,7 @@ typedef double VECTOR[SIZE];
 __device__ int n;
 __device__ int count;
 
+int BLOCK_SIZE = 16;
 __device__ struct node_coord {
     double x;
     double y;
@@ -58,12 +59,10 @@ __global__ void gpu_matrix_mult(double *a,double *b, double *c, int m, int n, in
     }
 } 
 
-// Code to get the number of cores in a SM
 int _ConvertSMVer2Cores(int major, int minor) {
 
-    // Defines for GPU Architecture types (using the SM version to determine the # of cores per SM
     typedef struct {
-        int SM; // 0xMm (hexidecimal notation), M = SM Major version, and m = SM minor version
+        int SM; 
         int Cores;
     } sSMtoCores;
 
@@ -90,8 +89,6 @@ int _ConvertSMVer2Cores(int major, int minor) {
         }
         index++;
     }
-    // If we don't find the values, we default use the previous one to run properly
-    printf("MapSMtoCores for SM %d.%d is undefined.  Default to use %d Cores/SM\n", major, minor, nGpuArchCoresPerSM[index-1].Cores);
     return nGpuArchCoresPerSM[index-1].Cores;
 }
 
@@ -99,11 +96,11 @@ int getNumThreads(){
     int num_threads = 0;
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);
-    for (int device = 0; device < deviceCount; device++) {
+    for (int device = 0; device < deviceCount; device++) 
+    {
         cudaDeviceProp deviceProp;
         cudaGetDeviceProperties(&deviceProp, device);
         int curr_t =  _ConvertSMVer2Cores(deviceProp.major, deviceProp.minor);
-        //int curr_t = deviceProp.maxThreadsPerBlock;
         if(curr_t > num_threads)
             num_threads = curr_t;
     }
@@ -365,70 +362,12 @@ void duplicate_matrix (double** input_matrix, double** output_matrix, int n)
     }
 }
 
-int main(int argc, char* argv[])
+double run_solver (double *L, double *k_out, double *host_obs_data, int n, int num_threads)
 {
-    struct node_coord *rstar = (struct node_coord *) malloc (1 * sizeof (struct node_coord));
-    int m;
-    int n;
-    double h;
-
-    if(argc != 4)
-    {
-        printf("Invalid number of input arguements. Please execute the binary as ./a.out m x* y*\n");
-        return 0;
-    }
-    else
-    {
-        m = atoi(argv[1]);
-        rstar[0].x = atof(argv[2]);
-        rstar[0].y = atof(argv[3]);
-        printf("Size: %d \n", m);
-        printf("Given coordinates (%f, %f)\n", rstar[0].x, rstar[0].y);
-    }
-
-    n = m * m;
-    h = 1.0 / (double)(m + 1);
-    int BLOCK_SIZE = 16;
-    int num_threads = getNumThreads();
-    cudaEvent_t start_overall, end_overall, start_LU, end_LU, start_solver, end_solver;
-
-    struct node_coord *grid_points = (struct node_coord *) malloc (n * sizeof (struct node_coord));
-    initialize_points (grid_points, m, h);
-
-
-    struct node_coord *device_grid_points;
-    cudaMalloc(&device_grid_points, (n * sizeof(struct node_coord)));
-    cudaMemcpy(device_grid_points, grid_points, n * sizeof(struct node_coord), cudaMemcpyHostToDevice);
-
-
-    double **observed_data_points = alloc_mem_matrix (n);
-    calculate_observed_data (observed_data_points, grid_points, n);
-    double *host_obs_data;
-    cudaMallocHost((void **) &host_obs_data, sizeof(double)*n*n);
-    convert_array (observed_data_points, host_obs_data, n , false);
-
     unsigned int grid_rows = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     unsigned int grid_cols = (1 + BLOCK_SIZE - 1) / BLOCK_SIZE;
     dim3 dimGrid(grid_cols, grid_rows);
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-
-    cudaEventCreate(&start_overall);
-    cudaEventCreate(&end_overall);
-    double *K1;
-    cudaMalloc(&K1, (n * n * sizeof(double)));
-    compute_K_matrix_gpu<<<1, num_threads>>>(num_threads, K1, device_grid_points, m);
-
-    double *L, *partial_sum;
-    cudaMalloc(&L, (n * n * sizeof(double)));
-    cudaMalloc(&partial_sum, num_threads * sizeof(double));
-    cudaEventCreate(&start_LU);
-    cudaEventCreate(&end_LU);
-    cudaEventRecord(start_LU, 0);
-    cudaEventRecord(start_overall, 0);
-
-    device_run_chol<<<1,num_threads>>>(num_threads, K1, L, partial_sum, n);
-    cudaEventRecord(end_LU, 0);
-    cudaEventSynchronize(end_LU);
     double **host_L = alloc_mem_matrix (n);
     double **host_U = alloc_mem_matrix (n);
     double **host_U_trans = alloc_mem_matrix (n);
@@ -446,10 +385,6 @@ int main(int argc, char* argv[])
     double *host_inv_trans = (double*) malloc(n * n *sizeof(double));
     convert_array(host_U_trans, host_inv_trans, n, false);
 
-    double **k = alloc_mem_matrix (n);
-    double *k_out = (double*) malloc(n * n *sizeof(double));
-    compute_k (k, rstar, grid_points, n);
-    convert_array(k, k_out, n, false);
 
     double *device_k_out, *device_host_inv, *device_host_inv_trans, *device_obs_data;
     cudaMalloc(&device_k_out, (n * n * sizeof(double)));
@@ -464,9 +399,6 @@ int main(int argc, char* argv[])
 
     double *product1;
     cudaMalloc(&product1, (n * n * sizeof(double)));
-    cudaEventCreate(&start_solver);
-    cudaEventCreate(&end_solver);
-    cudaEventRecord(start_solver, 0);
     gpu_matrix_mult<<<1, num_threads>>> (device_k_out, device_host_inv,product1, n, n , n);
 
     double *h_a, *h_b, *h_c;
@@ -502,14 +434,91 @@ int main(int argc, char* argv[])
     cudaMalloc(&final_product, (n * n * sizeof(double)));
     
     gpu_matrix_mult<<<dimGrid, dimBlock>>> (product1, d_c, final_product, 1, n , 1);
+    double *predicted_value = (double*) malloc(n * n * sizeof(double));
+    cudaMemcpy(predicted_value, final_product, n * n * sizeof(double), cudaMemcpyDeviceToHost);
+    return predicted_value[0];
+
+}
+int main(int argc, char* argv[])
+{
+    struct node_coord *rstar = (struct node_coord *) malloc (1 * sizeof (struct node_coord));
+    int m;
+    int n;
+    double h;
+
+    if(argc != 4)
+    {
+        printf("Invalid number of input arguements. Please execute the binary as ./a.out m x* y*\n");
+        return 0;
+    }
+    else
+    {
+        m = atoi(argv[1]);
+        rstar[0].x = atof(argv[2]);
+        rstar[0].y = atof(argv[3]);
+        printf("Size: %d \n", m);
+        printf("Given coordinates (%f, %f)\n", rstar[0].x, rstar[0].y);
+    }
+
+    n = m * m;
+    h = 1.0 / (double)(m + 1);
+    int num_threads = getNumThreads();
+    cudaEvent_t start_overall, end_overall, start_LU, end_LU, start_solver, end_solver;
+
+    struct node_coord *grid_points = (struct node_coord *) malloc (n * sizeof (struct node_coord));
+    initialize_points (grid_points, m, h);
+
+
+    struct node_coord *device_grid_points;
+    cudaMalloc(&device_grid_points, (n * sizeof(struct node_coord)));
+    cudaMemcpy(device_grid_points, grid_points, n * sizeof(struct node_coord), cudaMemcpyHostToDevice);
+
+
+    double **observed_data_points = alloc_mem_matrix (n);
+    calculate_observed_data (observed_data_points, grid_points, n);
+    double *host_obs_data;
+    cudaMallocHost((void **) &host_obs_data, sizeof(double)*n*n);
+    convert_array (observed_data_points, host_obs_data, n , false);
+
+    double **k = alloc_mem_matrix (n);
+    double *k_out = (double*) malloc(n * n *sizeof(double));
+    compute_k (k, rstar, grid_points, n);
+    convert_array(k, k_out, n, false);
+
+    unsigned int grid_rows = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    unsigned int grid_cols = (1 + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    dim3 dimGrid(grid_cols, grid_rows);
+    dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
+
+    cudaEventCreate(&start_overall);
+    cudaEventCreate(&end_overall);
+    double *K1;
+    cudaMalloc(&K1, (n * n * sizeof(double)));
+    compute_K_matrix_gpu<<<1, num_threads>>>(num_threads, K1, device_grid_points, m);
+
+    double *L, *partial_sum;
+    cudaMalloc(&L, (n * n * sizeof(double)));
+    cudaMalloc(&partial_sum, num_threads * sizeof(double));
+    cudaEventCreate(&start_LU);
+    cudaEventCreate(&end_LU);
+    cudaEventRecord(start_LU, 0);
+    cudaEventRecord(start_overall, 0);
+
+    device_run_chol<<<1,num_threads>>>(num_threads, K1, L, partial_sum, n);
+    cudaEventRecord(end_LU, 0);
+    cudaEventSynchronize(end_LU);
+
+
+    cudaEventCreate(&start_solver);
+    cudaEventCreate(&end_solver);
+    cudaEventRecord(start_solver, 0);
+    double predicted_value = run_solver (L, k_out, host_obs_data, n, num_threads);
     cudaEventRecord(end_solver, 0);
     cudaEventSynchronize(end_solver);
     cudaEventRecord(end_overall, 0);
     cudaEventSynchronize(end_overall);
 
-    double *predicted_value = (double*) malloc(n * n * sizeof(double));
-    cudaMemcpy(predicted_value, final_product, n * n * sizeof(double), cudaMemcpyDeviceToHost);
-    printf ("Predicted value is %lf\n", predicted_value[0]);
+    printf ("Predicted value is %lf\n", predicted_value);
 
     double actual_value = 1 - (((rstar[0].x - 0.5) * (rstar[0].x - 0.5)) +
             ((rstar[0].y - 0.5) * (rstar[0].y - 0.5))) + GET_RAND;
