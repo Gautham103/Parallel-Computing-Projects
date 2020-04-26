@@ -101,7 +101,15 @@ end
   it = 1;  % Fix t to be Tparam(1)
   for il1 = 1:length(Lparam),      
       for il2 = 1:length(Lparam),
-          ftest = GPR(XY, f, itest, itrain, Tparam(it), [Lparam(il1); Lparam(il2)], kernel);
+          n = size(XY,1);
+          K0 = kernel(XY,XY,[Lparam(il1); Lparam(il2)]);
+          ntest = length(itest); 
+          ntrain = length(itrain);
+          K = K0(itrain,itrain);
+          [L,U] = lu(Tparam(it)*eye(ntrain) + K);
+          k = K0(itrain,itest);
+          ftest = k'*(U\(L\f(itrain))); 
+          %ftest = GPR(XY, f, itest, itrain, Tparam(it), [Lparam(il1); Lparam(il2)], kernel);
           error = f(itest) - ftest;
           MSE(il1,il2) = error'*error;
           fprintf("Finished (l1,l2) = %f, %f, mse = %e\n", ...
