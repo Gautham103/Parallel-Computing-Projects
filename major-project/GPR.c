@@ -143,7 +143,6 @@ void compute_K_matrix (double **K, node_coord *grid_points, int n, double l1, do
 void extract_matrix (double **output, double **K0, int row_beg, int row_end, int col_beg, int col_end)
 {
     int k = 0, l = 0;
-    //printf ("row_beg %d row_end %d col_beg %d col_end %d\n", row_beg, row_end, col_beg, col_end);
     for (int i = row_beg; i <= row_end; i++)
     {
         for (int j = col_beg; j <= col_end; j++)
@@ -158,7 +157,6 @@ void extract_matrix (double **output, double **K0, int row_beg, int row_end, int
 void extract_f_matrix (double **output, double **f, int row_beg, int row_end)
 {
     int k = 0;
-    //printf ("row_beg %d row_end %d \n", row_beg, row_end);
     for (int i = row_beg; i <= row_end; i++)
     {
         output[0][k++] = f[i][0];
@@ -283,19 +281,16 @@ double** run_solver (double **K_inverse, double **k, double **f_train, int train
     double **product = alloc_multidim_matrix (train , test);
 //#pragma omp task default (none) shared(product, K_inverse, k, n)
     multiply_matrix (product, K_inverse, k, train , train, train, test);
-    //print_multidem_matrix ("product Matrix", product, train, test);
-    //print_multidem_matrix ("f_train Matrix", f_train, 1, train);
 
     double **output = alloc_multidim_matrix (1, test);
 //#pragma omp task default (none) shared(output, observed_data_points, product, n)
     multiply_matrix (output, f_train, product, 1, train, train, test);
-    //print_multidem_matrix ("output Matrix", output, 1, test);
 
     return output;
 
 }
 
-void findMin(double** mse_matrix, int n, int *index1, int *index2)
+void findMin(double** mse_matrix, int n, int *LParamIndex1, int *LParamIndex2)
 {
     double min= mse_matrix[0][0];
     int i,j;
@@ -306,8 +301,8 @@ void findMin(double** mse_matrix, int n, int *index1, int *index2)
             if(mse_matrix[i][j] < min)
             {
                 min= mse_matrix[i][j];
-                *index1 = i;
-                *index2 = j;
+                *LParamIndex1 = i;
+                *LParamIndex2 = j;
             }
         }
 }
@@ -329,33 +324,23 @@ double ** GPR (double **K0, node_coord *grid_points, double LParam1, double LPar
 
 int main(int argc, char* argv[])
 {
-    node_coord *rstar = (node_coord *) malloc (1 * sizeof (node_coord));
     int m;
-    int n;
-    double h;
-    int ntest, ntrain;
-    double LParam[L_PARAM_LENGTH] = {0.2500,0.7500,1.2500,1.7500,2.2500,2.7500,3.2500,3.7500,4.2500,
-        4.7500,5.2500,5.7500,6.2500,6.7500,7.2500,7.7500,8.2500,8.7500,9.2500,9.7500};
-    if(argc != 4)
+    if(argc != 2)
     {
-        printf("Invalid number of input arguements. Please execute the binary as ./a.out m x* y*\n");
+        printf("Invalid number of input arguements. Please execute the binary as ./a.out m\n");
         return 0;
     }
     else
     {
         m = atoi(argv[1]);
-        rstar[0].x = atof(argv[2]);
-        rstar[0].y = atof(argv[3]);
         printf("Size: %d \n", m);
-        printf("Given coordinates (%f, %f)\n", rstar[0].x, rstar[0].y);
     }
 
-    n = m*m;
-    h = 1.0 / (double)(m + 1);
-
+    double h = 1.0 / (double)(m + 1);
     double rate = 0.1;
-    ntest = ceil (rate * n);
-    ntrain = n - ntest;
+    int n = m * m;
+    int ntest = ceil (rate * n);
+    int ntrain = n - ntest;
 
     int train_start = ntest;
     int train_end = n - 1;
@@ -364,6 +349,7 @@ int main(int argc, char* argv[])
     int test_start = 0;
     int test_end = ntest - 1;
     int test = test_end - test_start + 1;
+
     double **K0 = alloc_multidim_matrix (n, n);
     double **K = alloc_multidim_matrix (train, train);
     double **k = alloc_multidim_matrix (train, test);
@@ -377,6 +363,15 @@ int main(int argc, char* argv[])
     double **mse = alloc_multidim_matrix (1, 1);
     double **mse_matrix = alloc_multidim_matrix (L_PARAM_LENGTH, L_PARAM_LENGTH);
 
+    int LParamIndex1,LParamIndex2;
+
+    double LParam[L_PARAM_LENGTH] = {0.2500,0.7500,1.2500,1.7500,2.2500,2.7500,3.2500,3.7500,4.2500,
+        4.7500,5.2500,5.7500,6.2500,6.7500,7.2500,7.7500,8.2500,8.7500,9.2500,9.7500};
+
+
+    n = m*m;
+    h = 1.0 / (double)(m + 1);
+
     for (int i = 0; i < 20; i++)
     {
         LParam[i] = (double)LParam[i] / m;
@@ -387,65 +382,6 @@ int main(int argc, char* argv[])
     initialize_points (grid_points, m, h);
     //#pragma omp taskwait
 
-#if 0
-    double **K0 = alloc_mem_matrix (n);
-    compute_K_matrix (K0, grid_points, n, (double)LParam[19], (double)LParam[19]);
-    //print_matrix ("K0 Matrix", K0, n);
-
-    ntest = ceil (rate * n);
-    ntrain = n - ntest;
-    int train_start = ntest;
-    int train_end = n - 1;
-    int train = train_end - train_start + 1;
-
-    int test_start = 0;
-    int test_end = ntest - 1;
-    int test = test_end - test_start + 1;
-    //printf ("train_start %d train_end %d test_start %d test_end %d \n", train_start, train_end, test_start, test_end);
-
-    double **K = alloc_multidim_matrix (train, train);
-    extract_matrix (K , K0, train_start, train_end, train_start, train_end);
-    for (int i = 0; i < train; i++)
-        K[i][i] += T_PARAM;
-    //print_multidem_matrix ("K Matrix", K, train, train);
-
-    double **k = alloc_multidim_matrix (train, test);
-    extract_matrix (k , K0, train_start, train_end, test_start, test_end);
-    //print_multidem_matrix ("k Matrix", k, train, test);
-
-    double **f = alloc_mem_matrix (n);
-    compute_f_matrix (f, grid_points, n, (double) 2/m, (double) 2/m);
-    //print_matrix ("f Matrix", f, n );
-
-    double **f_train = alloc_multidim_matrix (train, train);
-    extract_f_matrix (f_train , f, train_start, train_end);
-    //print_multidem_matrix ("f_train Matrix", f_train, train, train);
-
-    double **f_test = alloc_multidim_matrix (1, test);
-    extract_f_matrix (f_test , f, test_start, test_end);
-    print_multidem_matrix ("f_test Matrix", f_test, 1, test);
-
-    double **K_inverse = alloc_multidim_matrix (train, train);
-//#pragma omp task default (none) shared(n, K, K_inverse)
-    get_inverse_by_cholesky(train, K, K_inverse);
-    //print_multidem_matrix ("K inverse", K_inverse, train, train);
-//#pragma omp taskwait
-
-    double** f_predicted = run_solver (K_inverse, k, f_train, train, test);
-    print_multidem_matrix ("f_predicted Matrix", f_predicted, 1, test);
-
-
-    double **error = alloc_multidim_matrix (1, test);
-    double **error_trans = alloc_multidim_matrix (test, 1);
-    calculate_error (error, f_test, f_predicted, test);
-    get_transpose (error_trans, error, test);
-    print_multidem_matrix ("error Matrix", error, 1, test);
-    print_multidem_matrix ("error_trans Matrix", error_trans, test, 1);
-
-    double **mse = alloc_multidim_matrix (1, 1);
-    multiply_matrix (mse, error, error_trans, 1 , test, test, 1);
-    print_multidem_matrix ("mse Matrix", mse, 1, 1);
-#endif
     compute_f_matrix (f, grid_points, n, (double) 2/m, (double) 2/m);
     extract_f_matrix (f_train , f, train_start, train_end);
     extract_f_matrix (f_test , f, test_start, test_end);
@@ -455,29 +391,18 @@ int main(int argc, char* argv[])
         {
             f_predicted = GPR (K0, grid_points, (double)LParam[i], (double)LParam[j],
                     train_start, train_end, test_start, test_end, K, k, K_inverse, f_train, n);
-#if 0
-            compute_K_matrix (K0, grid_points, n, (double)LParam[i], (double)LParam[j]);
-            extract_matrix (K , K0, train_start, train_end, train_start, train_end);
-            for (int i = 0; i < train; i++)
-                K[i][i] += T_PARAM;
-            extract_matrix (k , K0, train_start, train_end, test_start, test_end);
-            get_inverse_by_cholesky(train, K, K_inverse);
-            f_predicted = run_solver (K_inverse, k, f_train, train, test);
-#endif
             calculate_error (error, f_test, f_predicted, test);
             get_transpose (error_trans, error, test);
             multiply_matrix (mse, error, error_trans, 1 , test, test, 1);
-            //print_multidem_matrix ("mse Matrix", mse, 1, 1);
             mse_matrix[i][j] = mse[0][0];
             printf("Finished (l1,l2) = %4.4lf, %4.4lf, mse = %e\n", LParam[i], LParam[j], mse_matrix[i][j]);
             mse[0][0] = 0;
         }
     }
 
-    //print_multidem_matrix ("mse Matrix", mse_matrix, L_PARAM_LENGTH, L_PARAM_LENGTH);
-    int index1,index2;
-    findMin(mse_matrix, L_PARAM_LENGTH , &index1, &index2);
-    printf ("Minimum value of MSE is %4.4lf at l1 = %4.4lf l2 = %4.4lf\n", mse_matrix[index1][index2], LParam[index1], LParam[index2]);
+    findMin(mse_matrix, L_PARAM_LENGTH , &LParamIndex1, &LParamIndex2);
+    printf ("Minimum value of MSE is %4.4lf at l1 = %4.4lf l2 = %4.4lf\n",
+            mse_matrix[LParamIndex1][LParamIndex2], LParam[LParamIndex1], LParam[LParamIndex2]);
 
     return 0;
 }
