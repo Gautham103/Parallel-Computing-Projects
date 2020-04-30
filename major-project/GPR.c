@@ -8,6 +8,7 @@
 #define GET_RAND 0.02 * (((double)rand()/(10.0 * (double)RAND_MAX)) - 0.05)
 #define  SIZE 10000
 #define  L_PARAM_LENGTH 20
+#define PI 3.1415
 typedef double VECTOR[SIZE];
 
 typedef struct node {
@@ -112,6 +113,17 @@ void initialize_points (node_coord *grid_points, int m, double h)
     }
 }
 
+void shuffle(int * arr, int n)
+{
+  for (int i = 0; i < n; i++)
+  {
+         int r = rand() % n;
+         int temp =  arr[i];
+         arr[i] =  arr[r];
+         arr[r] = temp;
+  }
+}
+
 void compute_f_matrix (double **f, node_coord *grid_points, int n, double l1, double l2)
 {
     double temp_x, temp_y;
@@ -135,31 +147,59 @@ void compute_K_matrix (double **K, node_coord *grid_points, int n, double l1, do
         {
             temp_x = ((grid_points[i].x - grid_points[j].x) * (grid_points[i].x - grid_points[j].x)) / (l1 * l1);
             temp_y = ((grid_points[i].y - grid_points[j].y) * (grid_points[i].y - grid_points[j].y)) / (l2 * l2);
-            K[i][j] = exp(-0.5 * (temp_x + temp_y));
+            K[i][j] = (1/sqrt(2*PI)) * exp(-0.5 * (temp_x + temp_y));
         }
     }
 }
 
-void extract_matrix (double **output, double **K0, int row_beg, int row_end, int col_beg, int col_end)
+void extract_K_matrix (double **output, double **K0, int n, int *train_index)
 {
+    int ntest = ceil (0.1 * n);
+    int ntrain = n - ntest;
+
     int k = 0, l = 0;
-    for (int i = row_beg; i <= row_end; i++)
+    for (int i = 0; i < ntrain; i++)
     {
-        for (int j = col_beg; j <= col_end; j++)
+        for (int j = 0; j < ntrain; j++)
         {
-            output[k][l++] = K0[i][j];
+            output[k][l++] = K0[train_index[i]][train_index[j]];
         }
         k++;
         l = 0;
     }
 }
 
-void extract_f_matrix (double **output, double **f, int row_beg, int row_end)
+void extract_k_matrix (double **output, double **K0, int n, int *train_index, int *test_index)
+{
+    int ntest = ceil (0.1 * n);
+    int ntrain = n - ntest;
+    int k = 0, l = 0;
+    for (int i = 0; i < ntrain; i++)
+    {
+        for (int j = 0; j < ntest; j++)
+        {
+            output[k][l++] = K0[train_index[i]][test_index[j]];
+        }
+        k++;
+        l = 0;
+    }
+}
+
+void extract_ftrain_matrix (double **output, double **f, int *index, int ntrain)
 {
     int k = 0;
-    for (int i = row_beg; i <= row_end; i++)
+    for (int i = 0; i < ntrain; i++)
     {
-        output[0][k++] = f[i][0];
+        output[0][k++] = f[index[i]][0];
+    }
+}
+
+void extract_ftest_matrix (double **output, double **f, int *index, int ntest, int n)
+{
+    int k = 0;
+    for (int i = 0; i < ntest; i++)
+    {
+        output[0][k++] = f[index[i]][0];
     }
 }
 
@@ -308,16 +348,17 @@ void findMin(double** mse_matrix, int n, int *LParamIndex1, int *LParamIndex2)
 }
 
 double ** GPR (double **K0, node_coord *grid_points, double LParam1, double LParam2,
-        int train_start, int train_end, int test_start, int test_end, double **K, double ** k, double ** K_inverse, double ** f_train, int n)
+        int train_start, int train_end, int test_start, int test_end, double **K, double ** k,
+        double ** K_inverse, double ** f_train, int n, int *train_index, int *test_index)
 {
     int train = train_end - train_start + 1;
     int test = test_end - test_start + 1;
 
     compute_K_matrix (K0, grid_points, n, (double)LParam1, (double)LParam2);
-    extract_matrix (K , K0, train_start, train_end, train_start, train_end);
+    extract_K_matrix (K , K0, n, train_index);
     for (int i = 0; i < train; i++)
         K[i][i] += T_PARAM;
-    extract_matrix (k , K0, train_start, train_end, test_start, test_end);
+    extract_k_matrix (k , K0, n, train_index, test_index);
     get_inverse_by_cholesky(train, K, K_inverse);
     return run_solver (K_inverse, k, f_train, train, test);
 }
@@ -333,7 +374,7 @@ int main(int argc, char* argv[])
     else
     {
         m = atoi(argv[1]);
-        printf("Size: %d \n", m);
+        printf("Matrix dimension = %d \n", m);
     }
 
     double h = 1.0 / (double)(m + 1);
@@ -363,7 +404,7 @@ int main(int argc, char* argv[])
     double **mse = alloc_multidim_matrix (1, 1);
     double **mse_matrix = alloc_multidim_matrix (L_PARAM_LENGTH, L_PARAM_LENGTH);
 
-    int LParamIndex1,LParamIndex2;
+    int LParamIndex1 = 0,LParamIndex2 = 0;
 
     double LParam[L_PARAM_LENGTH] = {0.2500,0.7500,1.2500,1.7500,2.2500,2.7500,3.2500,3.7500,4.2500,
         4.7500,5.2500,5.7500,6.2500,6.7500,7.2500,7.7500,8.2500,8.7500,9.2500,9.7500};
@@ -382,27 +423,45 @@ int main(int argc, char* argv[])
     initialize_points (grid_points, m, h);
     //#pragma omp taskwait
 
+    int *arr = (int *) malloc (sizeof (int) * n);
+    int index = 0;
+    int *train_index = (int *) malloc (sizeof (int) * ntrain);
+    int *test_index = (int *) malloc (sizeof (int) * ntest);
+
+    for (int i = 0; i < n; i++)
+        arr[i] = i;
+
+    shuffle (arr, n);
+
+    for (int i = 0; i < ntrain; i++)
+        train_index[index++] = arr[i];
+    index = 0;
+    for (int i = ntrain; i < n; i++)
+        test_index[index++] = arr[i];
+
     compute_f_matrix (f, grid_points, n, (double) 2/m, (double) 2/m);
-    extract_f_matrix (f_train , f, train_start, train_end);
-    extract_f_matrix (f_test , f, test_start, test_end);
+
+    extract_ftrain_matrix (f_train , f, train_index, ntrain);
+    extract_ftest_matrix (f_test , f, test_index, ntest, n);
+
     for (int i = 0; i < L_PARAM_LENGTH; i++)
     {
         for (int j = 0; j < L_PARAM_LENGTH; j++)
         {
             f_predicted = GPR (K0, grid_points, (double)LParam[i], (double)LParam[j],
-                    train_start, train_end, test_start, test_end, K, k, K_inverse, f_train, n);
+                    train_start, train_end, test_start, test_end, K, k, K_inverse, f_train, n, train_index, test_index);
             calculate_error (error, f_test, f_predicted, test);
             get_transpose (error_trans, error, test);
             multiply_matrix (mse, error, error_trans, 1 , test, test, 1);
-            mse_matrix[i][j] = mse[0][0];
-            printf("Finished (l1,l2) = %4.4lf, %4.4lf, mse = %e\n", LParam[i], LParam[j], mse_matrix[i][j]);
+            mse_matrix[i][j] = mse[0][0]/ntest;
+            //printf("Finished (l1,l2) = %4.4lf, %4.4lf, mse = %e\n", LParam[i], LParam[j], mse_matrix[i][j]);
             mse[0][0] = 0;
         }
     }
 
     findMin(mse_matrix, L_PARAM_LENGTH , &LParamIndex1, &LParamIndex2);
-    printf ("Minimum value of MSE is %4.4lf at l1 = %4.4lf l2 = %4.4lf\n",
-            mse_matrix[LParamIndex1][LParamIndex2], LParam[LParamIndex1], LParam[LParamIndex2]);
+    printf ("Initial value l1 = %4.4lf l2 = %4.4lf\n", (double)2/m, (double)2/m);
+    printf ("Predicted l1 = %4.4lf l2 = %4.4lf\n", LParam[LParamIndex1], LParam[LParamIndex2]);
 
     return 0;
 }
