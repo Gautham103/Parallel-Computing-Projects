@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
-//#include <omp.h>
+#include <omp.h>
 
 #define T_PARAM 0.5
 #define GET_RAND 0.02 * (((double)rand()/(10.0 * (double)RAND_MAX)) - 0.05)
@@ -29,7 +29,7 @@ double** alloc_multidim_matrix (int row, int col)
 
 double** multiply_matrix (double** product, double** matrix1, double** matrix2, int r1, int c1, int r2, int c2)
 {
-//#pragma omp for
+#pragma omp for
     for(int i = 0; i < r1; i++)
     {
         for(int j = 0; j < c2; j++)
@@ -101,7 +101,7 @@ void print_data (double *data_points, int n)
 void initialize_points (node_coord *grid_points, int m, double h)
 {
     int id = 0;
-//#pragma omp for
+#pragma omp for
     for(int i = 1; i <= m; i++)
     {
         for(int j = 1; j <= m; j++)
@@ -123,6 +123,23 @@ void shuffle(int * arr, int n)
          arr[r] = temp;
   }
 }
+
+
+void compute_new_f_matrix (double **f, node_coord *grid_points, int n, double l1, double l2)
+{
+    double temp_x, temp_y;
+
+    for (int i = 0; i < n; i++)
+    {
+        temp_x = ((grid_points[i].x - 0.1) * (grid_points[i].x - 0.1)) / (l1 * l1);
+        temp_y = ((grid_points[i].y - 0.1) * (grid_points[i].y - 0.1)) / (l2 * l2);
+        f[i][0] = exp(-0.5 * (temp_x + temp_y)) + (grid_points[i].x * 0.2) + (grid_points[i].y * 0.1) + GET_RAND;
+    }
+
+}
+
+
+
 
 void compute_f_matrix (double **f, node_coord *grid_points, int n, double l1, double l2)
 {
@@ -216,7 +233,7 @@ void cholesky_compute(int n, double ** matrix, VECTOR p)
     int i,j,k;
     double sum;
 
-//#pragma omp for
+#pragma omp for
     for (i = 0; i < n; i++)
     {
         for (j = i; j < n; j++)
@@ -255,7 +272,7 @@ void decompose_and_get_inverse (int n, double ** input_matrix, double ** output_
 
     cholesky_compute (n, output_matrix, p);
 
-//#pragma omp for
+#pragma omp for
     for (i = 0; i < n; i++)
     {
         output_matrix[i][i] = 1 / p[i];
@@ -275,7 +292,7 @@ void get_inverse_by_cholesky (int n, double ** input_matrix, double ** output_ma
 {
     int i,j,k;
     decompose_and_get_inverse (n, input_matrix, output_matrix);
-//#pragma omp for
+#pragma omp for
     for (i = 0; i < n; i++)
     {
         for (j = i + 1; j < n; j++)
@@ -319,11 +336,11 @@ void get_transpose (double ** output, double **input, int n)
 double** run_solver (double **K_inverse, double **k, double **f_train, int train, int test)
 {
     double **product = alloc_multidim_matrix (train , test);
-//#pragma omp task default (none) shared(product, K_inverse, k, n)
+#pragma omp task default (none) shared(product, K_inverse, k, train, test)
     multiply_matrix (product, K_inverse, k, train , train, train, test);
 
     double **output = alloc_multidim_matrix (1, test);
-//#pragma omp task default (none) shared(output, observed_data_points, product, n)
+#pragma omp task default (none) shared(output, f_train, product, train, test)
     multiply_matrix (output, f_train, product, 1, train, train, test);
 
     return output;
@@ -355,10 +372,14 @@ double ** GPR (double **K0, node_coord *grid_points, double LParam1, double LPar
     int test = test_end - test_start + 1;
 
     compute_K_matrix (K0, grid_points, n, (double)LParam1, (double)LParam2);
+#pragma omp task default (none) shared(K, K0, n, train_index)
     extract_K_matrix (K , K0, n, train_index);
+#pragma omp taskwait
     for (int i = 0; i < train; i++)
         K[i][i] += T_PARAM;
+#pragma omp task default (none) shared(k, K0, n, train_index, test_index)
     extract_k_matrix (k , K0, n, train_index, test_index);
+#pragma omp taskwait
     get_inverse_by_cholesky(train, K, K_inverse);
     return run_solver (K_inverse, k, f_train, train, test);
 }
@@ -374,7 +395,6 @@ int main(int argc, char* argv[])
     else
     {
         m = atoi(argv[1]);
-        printf("Matrix dimension = %d \n", m);
     }
 
     double h = 1.0 / (double)(m + 1);
@@ -419,9 +439,9 @@ int main(int argc, char* argv[])
     }
 
     node_coord *grid_points = (node_coord *) malloc (n * sizeof (node_coord));
-    //#pragma omp task default (none) shared(grid_points, m, h)
+#pragma omp task default (none) shared(grid_points, m, h)
     initialize_points (grid_points, m, h);
-    //#pragma omp taskwait
+#pragma omp taskwait
 
     int *arr = (int *) malloc (sizeof (int) * n);
     int index = 0;
@@ -443,10 +463,13 @@ int main(int argc, char* argv[])
 
     extract_ftrain_matrix (f_train , f, train_index, ntrain);
     extract_ftest_matrix (f_test , f, test_index, ntest, n);
+    int count = 1;
 
-    for (int i = 0; i < L_PARAM_LENGTH; i++)
+    double start_time = omp_get_wtime();
+    int i = 0, j = 0;
+    for (i = 0; i < L_PARAM_LENGTH; i++)
     {
-        for (int j = 0; j < L_PARAM_LENGTH; j++)
+        for (j = 0; j < L_PARAM_LENGTH; j++)
         {
             f_predicted = GPR (K0, grid_points, (double)LParam[i], (double)LParam[j],
                     train_start, train_end, test_start, test_end, K, k, K_inverse, f_train, n, train_index, test_index);
@@ -454,14 +477,31 @@ int main(int argc, char* argv[])
             get_transpose (error_trans, error, test);
             multiply_matrix (mse, error, error_trans, 1 , test, test, 1);
             mse_matrix[i][j] = mse[0][0]/ntest;
-            //printf("Finished (l1,l2) = %4.4lf, %4.4lf, mse = %e\n", LParam[i], LParam[j], mse_matrix[i][j]);
+            printf("Iteration %d Finished (l1,l2) = %4.4lf, %4.4lf, mse = %e\n", count++, LParam[i], LParam[j], mse_matrix[i][j]);
             mse[0][0] = 0;
         }
     }
+    double end_time = omp_get_wtime();
 
     findMin(mse_matrix, L_PARAM_LENGTH , &LParamIndex1, &LParamIndex2);
-    printf ("Initial value l1 = %4.4lf l2 = %4.4lf\n", (double)2/m, (double)2/m);
-    printf ("Predicted l1 = %4.4lf l2 = %4.4lf\n", LParam[LParamIndex1], LParam[LParamIndex2]);
+    printf("\n\nMatrix dimension = %d \n", m);
+    printf ("Estimated l1 = %4.4lf l2 = %4.4lf\n", LParam[LParamIndex1], LParam[LParamIndex2]);
+    printf ("Time taken = %4.4e\n", end_time - start_time);
+
+
+    compute_new_f_matrix (f, grid_points, n, (double) 2/m, (double) 2/m);
+    extract_ftrain_matrix (f_train , f, train_index, ntrain);
+    extract_ftest_matrix (f_test , f, test_index, ntest, n);
+
+
+    f_predicted = GPR (K0, grid_points, (double)LParam[LParamIndex1], (double)LParam[LParamIndex2],
+            train_start, train_end, test_start, test_end, K, k, K_inverse, f_train, n, train_index, test_index);
+    calculate_error (error, f_test, f_predicted, test);
+    get_transpose (error_trans, error, test);
+    multiply_matrix (mse, error, error_trans, 1 , test, test, 1);
+    printf ("\nMSE of new data set %e\n", mse[0][0]/ntest);
+
+
 
     return 0;
 }
